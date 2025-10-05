@@ -1,0 +1,263 @@
+import random
+from string import ascii_lowercase
+from itertools import combinations
+import numpy as np
+import heapq
+
+
+
+def create_ksat_problem(n, k, m):
+   
+    positive_var = list(ascii_lowercase)[:n]
+    negative_var = [var.upper() for var in positive_var]
+    variables = positive_var + negative_var
+    
+    problems = []
+    threshold = 10  
+    attempts = 0
+    max_attempts = 1000
+    
+    all_combinations = list(combinations(variables, k))
+    
+    while len(problems) < threshold and attempts < max_attempts:
+        clauses = random.sample(all_combinations, min(m, len(all_combinations)))
+        
+        clause_list = [list(clause) for clause in clauses]
+        
+        if clause_list not in problems:
+            problems.append(clause_list)
+        
+        attempts += 1
+    
+    return variables, problems
+
+
+def random_assignment(variables, n):
+    """Generate random initial assignment for variables."""
+    literals = list(np.random.choice(2, n))
+    negation = [abs(i - 1) for i in literals]
+    assign = literals + negation
+    return dict(zip(variables, assign))
+
+
+def heuristic_satisfied_clauses(problem, assignment):
+    """
+    Heuristic 1: Count number of satisfied clauses (to be maximized).
+    """
+    count = 0
+    for clause in problem:
+        values = [assignment[literal] for literal in clause]
+        count += any(values)
+    return count
+
+
+def heuristic_unsatisfied_clauses(problem, assignment):
+    """
+    Heuristic 2: Count number of unsatisfied clauses (to be minimized).
+    """
+    total_clauses = len(problem)
+    satisfied = heuristic_satisfied_clauses(problem, assignment)
+    return total_clauses - satisfied
+
+
+def is_goal_state(problem, assignment):
+    """Check if all clauses are satisfied."""
+    satisfied = heuristic_satisfied_clauses(problem, assignment)
+    return satisfied == len(problem)
+
+
+
+def generate_successors(current_assignment):
+    """Generate all successor states by flipping one variable."""
+    successors = []
+    keys = sorted([k for k in current_assignment.keys() if k.islower()])
+    
+    for var in keys:
+        successor = current_assignment.copy()
+        successor[var] = abs(successor[var] - 1)
+        neg_var = var.upper()
+        successor[neg_var] = abs(successor[neg_var] - 1)
+        successors.append(successor)
+    
+    return successors
+
+
+# BEST-FIRST SEARCH WITH PRIORITY QUEUE
+
+def best_first_search(start_state, problem, max_iterations=10000, use_heuristic=1):
+    """
+    Best-First Search using priority queue for k-SAT.
+    
+    Args:
+        start_state: initial variable assignment
+        problem: list of clauses
+        max_iterations: maximum iterations
+        use_heuristic: 1 for satisfied clauses (max), 2 for unsatisfied clauses (min)
+    
+    Returns:
+        solution, depth, states_generated, stats
+    """
+    start_state = {k: int(v) for k, v in start_state.items()}
+    
+    states_generated = 0
+    states_visited = 0
+    max_queue_size = 0
+    
+    counter = 0
+    
+    if use_heuristic == 1:
+        initial_h = -heuristic_satisfied_clauses(problem, start_state)
+    else:
+        initial_h = heuristic_unsatisfied_clauses(problem, start_state)
+    
+    priority_queue = [(initial_h, counter, start_state, 0)]
+    counter += 1
+    
+    visited = set()
+    visited.add(tuple(sorted(start_state.items())))
+    
+    best_state = start_state
+    best_score = heuristic_satisfied_clauses(problem, start_state)
+    
+    iteration = 0
+    
+    while priority_queue and iteration < max_iterations:
+        max_queue_size = max(max_queue_size, len(priority_queue))
+        
+        priority, _, current_state, depth = heapq.heappop(priority_queue)
+        states_visited += 1
+        iteration += 1
+        
+        if is_goal_state(problem, current_state):
+            stats = {
+                'states_generated': states_generated,
+                'states_visited': states_visited,
+                'max_queue_size': max_queue_size,
+                'final_satisfied': heuristic_satisfied_clauses(problem, current_state),
+                'total_clauses': len(problem)
+            }
+            return current_state, depth, states_generated, stats
+        
+        current_score = heuristic_satisfied_clauses(problem, current_state)
+        if current_score > best_score:
+            best_score = current_score
+            best_state = current_state
+        
+        successors = generate_successors(current_state)
+        states_generated += len(successors)
+        
+        for successor in successors:
+            state_tuple = tuple(sorted(successor.items()))
+            
+            if state_tuple not in visited:
+                visited.add(state_tuple)
+                
+                if use_heuristic == 1:
+                    h_value = -heuristic_satisfied_clauses(problem, successor)
+                else:
+                    h_value = heuristic_unsatisfied_clauses(problem, successor)
+                
+                heapq.heappush(priority_queue, (h_value, counter, successor, depth + 1))
+                counter += 1
+    
+    stats = {
+        'states_generated': states_generated,
+        'states_visited': states_visited,
+        'max_queue_size': max_queue_size,
+        'final_satisfied': best_score,
+        'total_clauses': len(problem),
+        'timeout': True
+    }
+    
+    print(f"Max iterations reached. Best solution satisfies {best_score}/{len(problem)} clauses")
+    return best_state, iteration, states_generated, stats
+
+
+
+def calculate_penetrance(solution_depth, states_generated):
+    """Calculate penetrance = solution_depth / states_generated"""
+    if states_generated == 0:
+        return 0
+    return solution_depth / states_generated
+
+
+def test_ksat_algorithms(n, k, m, num_tests=5):
+    """Test both heuristics on k-SAT problems and compare results."""
+    print(f"\n{'='*70}")
+    print(f"Testing k-SAT with n={n}, k={k}, m={m}")
+    print(f"{'='*70}")
+    
+    variables, problems = create_ksat_problem(n, k, m)
+    
+    results_h1 = []
+    results_h2 = []
+    
+    for i, problem in enumerate(problems[:num_tests]):
+        print(f"\n--- Problem Instance {i+1} ---")
+        print(f"Clauses: {len(problem)}")
+        
+        initial_state = random_assignment(variables, n)
+        initial_satisfied = heuristic_satisfied_clauses(problem, initial_state)
+        print(f"Initial satisfied clauses: {initial_satisfied}/{len(problem)}")
+        
+        # Test Heuristic 1
+        print("\nHeuristic 1 (Maximize Satisfied Clauses):")
+        solution1, depth1, generated1, stats1 = best_first_search(
+            initial_state.copy(), problem, use_heuristic=1
+        )
+        penetrance1 = calculate_penetrance(depth1, generated1)
+        results_h1.append((depth1, generated1, penetrance1, stats1))
+        
+        print(f"  Solution depth: {depth1}")
+        print(f"  States generated: {generated1}")
+        print(f"  Max queue size: {stats1['max_queue_size']}")
+        print(f"  Penetrance: {penetrance1:.6f}")
+        print(f"  Final satisfied: {stats1['final_satisfied']}/{stats1['total_clauses']}")
+        
+        # Test Heuristic 2
+        print("\nHeuristic 2 (Minimize Unsatisfied Clauses):")
+        solution2, depth2, generated2, stats2 = best_first_search(
+            initial_state.copy(), problem, use_heuristic=2
+        )
+        penetrance2 = calculate_penetrance(depth2, generated2)
+        results_h2.append((depth2, generated2, penetrance2, stats2))
+        
+        print(f"  Solution depth: {depth2}")
+        print(f"  States generated: {generated2}")
+        print(f"  Max queue size: {stats2['max_queue_size']}")
+        print(f"  Penetrance: {penetrance2:.6f}")
+        print(f"  Final satisfied: {stats2['final_satisfied']}/{stats2['total_clauses']}")
+    
+    print(f"\n{'='*70}")
+    print("SUMMARY STATISTICS")
+    print(f"{'='*70}")
+    
+    avg_depth1 = np.mean([r[0] for r in results_h1])
+    avg_gen1 = np.mean([r[1] for r in results_h1])
+    avg_pen1 = np.mean([r[2] for r in results_h1])
+    
+    avg_depth2 = np.mean([r[0] for r in results_h2])
+    avg_gen2 = np.mean([r[1] for r in results_h2])
+    avg_pen2 = np.mean([r[2] for r in results_h2])
+    
+    print("\nHeuristic 1 (Maximize Satisfied Clauses):")
+    print(f"  Average depth: {avg_depth1:.2f}")
+    print(f"  Average states generated: {avg_gen1:.2f}")
+    print(f"  Average penetrance: {avg_pen1:.6f}")
+    
+    print("\nHeuristic 2 (Minimize Unsatisfied Clauses):")
+    print(f"  Average depth: {avg_depth2:.2f}")
+    print(f"  Average states generated: {avg_gen2:.2f}")
+    print(f"  Average penetrance: {avg_pen2:.6f}")
+    
+    return results_h1, results_h2
+
+
+
+
+if __name__ == "__main__":
+    print("k-SAT Problem Solver using Best-First Search\n")
+    
+    test_ksat_algorithms(n=4, k=3, m=8, num_tests=3)
+    test_ksat_algorithms(n=5, k=4, m=10, num_tests=3)
+    test_ksat_algorithms(n=6, k=5, m=12, num_tests=3)
